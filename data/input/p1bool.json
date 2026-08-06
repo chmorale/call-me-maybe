@@ -1,0 +1,17 @@
+[
+  {
+    "prompt": "Set active to true"
+  },
+  {
+    "prompt": "Set active to false"
+  },
+  {
+    "prompt": "Set the flag active to true"
+  },
+  {
+    "prompt": "Please set the flag to false"
+  },
+  {
+    "prompt": "I want active set to true"
+  }
+ ]

@@ -1,0 +1,11 @@
+[
+  {
+    "prompt": "Replace all vowels in 'Programming is fun' with asterisks",
+    "fn_name": "fn_substitute_string_with_regex",
+    "args": {
+      "source_string": "Programming is fun",
+      "regex": ".*[aeiouAEIOU].*",
+      "replacement": "asterisk"
+    }
+  }
+]
