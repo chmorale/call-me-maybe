@@ -13,7 +13,9 @@ PromptElement = PromptItem | str
 PromptListValidator = TypeAdapter(list[PromptElement])
 
 
-def gest_error(func: Callable[[list[dict]], T]) -> Callable[[str], T]:
+def gest_error(
+        func: Callable[[list[dict[str, Any]]], T]
+        ) -> Callable[[str], T]:
     def wrapper(file_path: str) -> T:
         try:
             with open(file_path, "r", encoding="utf-8") as f:
@@ -38,7 +40,7 @@ def gest_error(func: Callable[[list[dict]], T]) -> Callable[[str], T]:
 
 
 @gest_error
-def prompt_parser(prompt_str: list[dict]) -> list[str]:
+def prompt_parser(prompt_str: list[dict[str, Any]]) -> list[str]:
     valid_prompts = PromptListValidator.validate_python(prompt_str)
 
     clean_prompts = [
@@ -52,15 +54,16 @@ def prompt_parser(prompt_str: list[dict]) -> list[str]:
 class FunctionDefinition(BaseModel):
     name: str
     description: str
-    parameters: dict
-    returns: dict
+    parameters: dict[str, Any]
+    returns: dict[str, Any]
 
 
 FunctionListValidator = TypeAdapter(list[FunctionDefinition])
 
 
 @gest_error
-def function_parser(function_str: list[dict]) -> list[dict]:
+def function_parser(
+        function_str: list[dict[str, Any]]) -> list[dict[str, Any]]:
     valid_functions = FunctionListValidator.validate_python(function_str)
 
     clean_functions = [

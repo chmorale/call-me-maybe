@@ -1,10 +1,11 @@
 import numpy as np
+from typing import Any
 from llm_sdk import Small_LLM_Model
 
 
 def get_score(model: Small_LLM_Model,
               prompt: str,
-              function_item: dict) -> float:
+              function_item: dict[str, Any]) -> float:
     """Score how likely a candidate function is, given a context prompt.
 
     Uses teacher forcing: forces the model to process the function name
@@ -34,7 +35,4 @@ def get_score(model: Small_LLM_Model,
         current_input.append(token_id)
         log_probs = logit_token - np.log(np.sum(np.exp(logits)))
         value += log_probs
-        # token_text = model.decode([token_id])
-        # print(f"  token: {token_text!r}  (id={token_id})  "
-        #       f"log_prob={log_probs:.4f}  acumulado={value:.4f}")
     return value

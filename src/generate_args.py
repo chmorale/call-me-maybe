@@ -1,4 +1,5 @@
 import re
+from typing import Any
 from llm_sdk import Small_LLM_Model
 
 
@@ -46,11 +47,29 @@ def generate_string(
     parameter_name: str,
     i: int,
 ) -> tuple[str, list[int]]:
-    """"""
+    """Generate a string argument value token by token until a closing quote.
 
-    ordinal = "first" if i == 0 else "second" if i == 1 else f"{i+1}th"
+    Args:
+        model: The loaded language model.
+        current_input: Token ids generated so far (context + prior values).
+        vocab: The model's vocabulary, mapping token text to token id.
+        parameter_name: Name of the parameter being generated, used to
+            build the prompt line.
+        i: Index of this parameter among the function's parameters, used
+            to phrase the ordinal ("first", "second", ...) in the prompt.
+
+    Returns:
+        tuple[str, list[int]]: The generated string value, and the list of
+            token ids generated for it (including the closing quote token)."""
+
+    # ordinal = "first" if i == 0 else "second" if i == 1 else f"{i+1}th"
+    # parameter_line = (
+    #    f'(use the {ordinal} string mentioned in the question. '
+    #    f'"{parameter_name}": "'
+    # )
     parameter_line = (
-        f'(use the {ordinal} string mentioned in the question. '
+        f'(use the value that corresponds to "{parameter_name}" '
+        f'in the question, not any other word) '
         f'"{parameter_name}": "'
     )
     ids_extra = model.encode(parameter_line)[0].tolist()
@@ -58,22 +77,23 @@ def generate_string(
 
     generated_ids: list[int] = []
     strings_so_far = ""
-    intentos = 0
+    counter = 0
 
     while True:
-        intentos += 1
-        if intentos > 20:
-            print("    [debug] ¡Demasiados intentos, abortando bucle!")
-            break
+        counter += 1
+        if counter > 20:
+            raise RuntimeError(
+                f"Could not generate a valid string for parameter "
+                f"{parameter_name!r} after 20 attempts"
+            )
         logits = model.get_logits_from_input_ids(current_input + generated_ids)
 
         best_id = max(range(len(logits)), key=lambda x: logits[x])
 
-        print(f"    [debug] best_id={best_id} "
-              f"texto={model.decode([best_id])!r} "
-              )
-        # print(f"    [debug] parameter_line = {parameter_line!r}")
         if '"' in model.decode([best_id]):
+            token_text = model.decode([best_id])
+            content_before_quote = token_text.split('"')[0]
+            strings_so_far += content_before_quote
             generated_ids.append(best_id)
             break
 
@@ -105,13 +125,9 @@ def generate_boolean(
     valid_ids = set(bools_ids.values())
     best_id = max(valid_ids, key=lambda x: logits[x])
 
-    print(f"    [debug] best_id={best_id} "
-          f"texto={model.decode([best_id])!r} "
-          f"num_validos={len(valid_ids)}")
-
-    texto = model.decode([best_id])
-    valor = (texto.strip() == "true")
-    return valor, [best_id]
+    text = model.decode([best_id])
+    value = (text.strip() == "true")
+    return value, [best_id]
 
 
 def generate_number(
@@ -119,7 +135,7 @@ def generate_number(
     current_input: list[int],
     vocab: dict[str, int],
     parameter_name: str,
-    es_ultimo: bool,
+    is_last: bool,
     i: int,
 ) -> tuple[float, list[int]]:
     """Generate a numeric argument value using constrained decoding.
@@ -128,39 +144,36 @@ def generate_number(
         model: The loaded language model.
         current_input: Token ids generated so far (context + prior values).
         vocab: The model's vocabulary, mapping token text to token id.
-        es_ultimo: Whether this is the last parameter (terminator is '}'
+        is_last: Whether this is the last parameter (terminator is '}'
             instead of ',').
 
     Returns:
         tuple[float, list[int]]: The parsed numeric value, and the list of
             token ids generated for it (terminator token excluded).
     """
-    # parameter_line = f'"{parameter_name}":'
     ordinal = "first" if i == 0 else "second" if i == 1 else f"{i+1}th"
     parameter_line = (
         f'(use the {ordinal} number mentioned in the question) '
         f'"{parameter_name}":'
     )
-    # parameter_line = (
-    #    f'(use the number from the question that has not been used yet) '
-    #    f'"{parameter_name}":'
-    # )
     ids_extra = model.encode(parameter_line)[0].tolist()
     current_input = current_input + ids_extra
     digit_ids = get_digit_token_ids(vocab)
-    terminator_char = "}" if es_ultimo else ","
+    terminator_char = "}" if is_last else ","
     terminator_ids = get_terminator_token_ids(vocab, terminator_char)
 
     generated_ids: list[int] = []
     digits_so_far = ""
     has_digit = False
-    intentos = 0
+    counter = 0
 
     while True:
-        intentos += 1
-        if intentos > 20:
-            print("    [debug] ¡Demasiados intentos, abortando bucle!")
-            break
+        counter += 1
+        if counter > 20:
+            raise RuntimeError(
+                f"Could not generate a valid number for parameter "
+                f"{parameter_name!r} after 20 attempts"
+                )
         logits = model.get_logits_from_input_ids(current_input + generated_ids)
         if not has_digit:
             valid_ids = set(digit_ids.values())
@@ -169,11 +182,6 @@ def generate_number(
 
         best_id = max(valid_ids, key=lambda x: logits[x])
 
-        print(f"    [debug] best_id={best_id} "
-              f"texto={model.decode([best_id])!r} "
-              f"es_terminador={best_id in terminator_ids.values()} "
-              f"num_validos={len(valid_ids)}")
-        # print(f"    [debug] parameter_line = {parameter_line!r}")
         if best_id in terminator_ids.values():
             break
 
@@ -186,49 +194,55 @@ def generate_number(
 
 def generate_args(
     model: Small_LLM_Model,
-    best_function: dict,
+    best_function: dict[str, Any],
     prompt_item: str,
     vocab: dict[str, int],
-) -> dict:
+) -> dict[str, float | bool | str | int]:
     """Generate the args dict for the chosen function,
        one parameter at a time."""
-    numeros = re.findall(r'-?\d+\.?\d*', prompt_item)
-    contexto_base = (
+    numbers = re.findall(r'-?\d+\.?\d*', prompt_item)
+    basic_context = (
         f'User question: "{prompt_item}"\n'
         f'Function: {best_function["name"]} — {best_function["description"]}\n'
         f'Extract the argument values directly from the user question above.\n'
         f'in the order they appear. Each parameter must use a different value '
         f'from the question.\n'
-        f'Numbers mentioned in the question, in order: {", ".join(numeros)}.\n'
-        f'Generate a JSON object with the argment values.\n'
+        f'Numbers mentioned in the question, in order: {", ".join(numbers)}.\n'
+        f'Generate a JSON object with the argument values.\n'
         f'{{'
     )
-    current_input = model.encode(contexto_base)[0].tolist()
+    current_input = model.encode(basic_context)[0].tolist()
 
     parameters = best_function["parameters"]
-    nombres_parametros = list(parameters.keys())
-    args: dict = {}
+    parameter_names = list(parameters.keys())
+    args: dict[str, float | bool | str | int] = {}
 
-    for i, nombre in enumerate(nombres_parametros):
-        tipo = parameters[nombre]["type"]
-        es_ultimo = (i == len(nombres_parametros) - 1)
+    for i, name in enumerate(parameter_names):
+        param_type = parameters[name]["type"]
+        is_last = (i == len(parameter_names) - 1)
+        value: float | bool | str | int
 
-        if tipo == "number":
-            valor, tokens_generados = generate_number(
-                model, current_input, vocab, nombre, es_ultimo, i
+        if param_type == "number":
+            value, generated_tokens = generate_number(
+                model, current_input, vocab, name, is_last, i
             )
-        elif tipo == "boolean":
-            valor, tokens_generados = generate_boolean(
-                model, current_input, vocab, nombre, i
+        elif param_type == "integer":
+            value, generated_tokens = generate_number(
+                model, current_input, vocab, name, is_last, i
             )
-        elif tipo == "string":
-            valor, tokens_generados = generate_string(
-                model, current_input, vocab, nombre, i
+            value = int(value)
+        elif param_type == "boolean":
+            value, generated_tokens = generate_boolean(
+                model, current_input, vocab, name, i
+            )
+        elif param_type == "string":
+            value, generated_tokens = generate_string(
+                model, current_input, vocab, name, i
             )
         else:
-            raise ValueError(f"Unsupported parameter type: {tipo!r}")
+            raise ValueError(f"Unsupported parameter type: {param_type!r}")
 
-        args[nombre] = valor
-        current_input = current_input + tokens_generados
+        args[name] = value
+        current_input = current_input + generated_tokens
 
     return args

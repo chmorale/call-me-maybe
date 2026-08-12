@@ -16,6 +16,10 @@ lint: install
 	uv run mypy . --warn-return-any --warn-unused-ignores \
 		--ignore-missing-imports --disallow-untyped-defs --check-untyped-defs
 
+lint-strict: install
+	uv run flake8 .
+	uv run mypy . --strict
+
 clean:
 	find . -type d -name "__pycache__" -exec rm -rf {} +
 	rm -rf .mypy_cache
