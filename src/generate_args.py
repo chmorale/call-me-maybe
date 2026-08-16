@@ -40,6 +40,42 @@ def get_terminator_token_ids(
             if token.strip() == char}
 
 
+def get_safe_string_token_ids(vocab: dict[str, int]) -> dict[str, int]:
+    """Map every vocab token safe to use unescaped inside a JSON string
+    value to its id.
+
+    A token is considered safe if its text does not contain a character
+    that would break JSON string validity if inserted raw: an unescaped
+    double quote, a backslash, or a raw control character such as a
+    newline, carriage return, or tab.
+
+    Args:
+        vocab: The model's vocabulary, mapping token text to token id.
+
+    Returns:
+        dict[str, int]: Safe-to-use string tokens mapped to their id.
+    """
+    forbidden_chars = ('"', "\\", "\n", "\r", "\t")
+    return {token: token_id for token, token_id in vocab.items()
+            if not any(char in token for char in forbidden_chars)}
+
+
+def get_quote_token_ids(vocab: dict[str, int]) -> dict[str, int]:
+    """Map every vocab token containing a double quote to its id.
+
+    These act as the terminator tokens for string generation: the string
+    value ends at the first token whose text contains a `"`.
+
+    Args:
+        vocab: The model's vocabulary, mapping token text to token id.
+
+    Returns:
+        dict[str, int]: Tokens containing `"` mapped to their id.
+    """
+    return {token: token_id for token, token_id in vocab.items()
+            if '"' in token}
+
+
 def generate_string(
     model: Small_LLM_Model,
     current_input: list[int],
@@ -75,6 +111,10 @@ def generate_string(
     ids_extra = model.encode(parameter_line)[0].tolist()
     current_input = current_input + ids_extra
 
+    safe_ids = get_safe_string_token_ids(vocab)
+    quote_ids = get_quote_token_ids(vocab)
+    valid_ids = set(safe_ids.values()) | set(quote_ids.values())
+
     generated_ids: list[int] = []
     strings_so_far = ""
     counter = 0
@@ -88,9 +128,9 @@ def generate_string(
             )
         logits = model.get_logits_from_input_ids(current_input + generated_ids)
 
-        best_id = max(range(len(logits)), key=lambda x: logits[x])
+        best_id = max(valid_ids, key=lambda x: logits[x])
 
-        if '"' in model.decode([best_id]):
+        if best_id in quote_ids.values():
             token_text = model.decode([best_id])
             content_before_quote = token_text.split('"')[0]
             strings_so_far += content_before_quote
