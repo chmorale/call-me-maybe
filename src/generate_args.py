@@ -41,23 +41,25 @@ def get_terminator_token_ids(
 
 
 def get_safe_string_token_ids(vocab: dict[str, int]) -> dict[str, int]:
-    """Map every vocab token safe to use unescaped inside a JSON string
-    value to its id.
+    """Map every vocab token safe to use as JSON string content to its id.
 
-    A token is considered safe if its text does not contain a character
-    that would break JSON string validity if inserted raw: an unescaped
-    double quote, a backslash, or a raw control character such as a
-    newline, carriage return, or tab.
+    Unlike `number` or `boolean` parameters, a plain `"type": "string"`
+    parameter has no restricted character alphabet: any text is valid
+    JSON string content once properly escaped, and `json.dump` always
+    performs that escaping automatically on serialization (backslashes,
+    control characters, etc. are never written raw into the output
+    file). The only token that needs special handling is one containing
+    a double quote (`"`), which signals the end of the value.
 
     Args:
         vocab: The model's vocabulary, mapping token text to token id.
 
     Returns:
-        dict[str, int]: Safe-to-use string tokens mapped to their id.
+        dict[str, int]: Content tokens (everything except quote-bearing
+            terminator tokens) mapped to their id.
     """
-    forbidden_chars = ('"', "\\", "\n", "\r", "\t")
     return {token: token_id for token, token_id in vocab.items()
-            if not any(char in token for char in forbidden_chars)}
+            if '"' not in token}
 
 
 def get_quote_token_ids(vocab: dict[str, int]) -> dict[str, int]:
@@ -82,6 +84,7 @@ def generate_string(
     vocab: dict[str, int],
     parameter_name: str,
     i: int,
+    prompt_item: str,
 ) -> tuple[str, list[int]]:
     """Generate a string argument value token by token until a closing quote.
 
@@ -93,19 +96,21 @@ def generate_string(
             build the prompt line.
         i: Index of this parameter among the function's parameters, used
             to phrase the ordinal ("first", "second", ...) in the prompt.
+        prompt_item: The original user question, repeated here so the
+            model has a fresh, unambiguous reference to it instead of
+            relying on it staying salient from earlier in the context
+            (which can otherwise be crowded out by more recently
+            generated parameter values).
 
     Returns:
         tuple[str, list[int]]: The generated string value, and the list of
             token ids generated for it (including the closing quote token)."""
 
-    # ordinal = "first" if i == 0 else "second" if i == 1 else f"{i+1}th"
-    # parameter_line = (
-    #    f'(use the {ordinal} string mentioned in the question. '
-    #    f'"{parameter_name}": "'
-    # )
     parameter_line = (
+        f'Recall the user question: "{prompt_item}"\n'
         f'(use the value that corresponds to "{parameter_name}" '
-        f'in the question, not any other word) '
+        f'in that question, not any other word, and not a value already '
+        f'used for another parameter) '
         f'"{parameter_name}": "'
     )
     ids_extra = model.encode(parameter_line)[0].tolist()
@@ -149,12 +154,14 @@ def generate_boolean(
     vocab: dict[str, int],
     parameter_name: str,
     i: int,
+    prompt_item: str,
 ) -> tuple[bool, list[int]]:
     """Generate a boolean argument value using constrained decoding."""
 
     ordinal = "first" if i == 0 else "second" if i == 1 else f"{i+1}th"
     parameter_line = (
-        f'(use the {ordinal} boolean mentioned in the question) '
+        f'Recall the user question: "{prompt_item}"\n'
+        f'(use the {ordinal} boolean mentioned in that question) '
         f'"{parameter_name}":'
     )
     ids_extra = model.encode(parameter_line)[0].tolist()
@@ -177,6 +184,7 @@ def generate_number(
     parameter_name: str,
     is_last: bool,
     i: int,
+    prompt_item: str,
 ) -> tuple[float, list[int]]:
     """Generate a numeric argument value using constrained decoding.
 
@@ -186,6 +194,8 @@ def generate_number(
         vocab: The model's vocabulary, mapping token text to token id.
         is_last: Whether this is the last parameter (terminator is '}'
             instead of ',').
+        prompt_item: The original user question, repeated here so the
+            model has a fresh, unambiguous reference to it.
 
     Returns:
         tuple[float, list[int]]: The parsed numeric value, and the list of
@@ -193,7 +203,8 @@ def generate_number(
     """
     ordinal = "first" if i == 0 else "second" if i == 1 else f"{i+1}th"
     parameter_line = (
-        f'(use the {ordinal} number mentioned in the question) '
+        f'Recall the user question: "{prompt_item}"\n'
+        f'(use the {ordinal} number mentioned in that question) '
         f'"{parameter_name}":'
     )
     ids_extra = model.encode(parameter_line)[0].tolist()
@@ -264,20 +275,20 @@ def generate_args(
 
         if param_type == "number":
             value, generated_tokens = generate_number(
-                model, current_input, vocab, name, is_last, i
+                model, current_input, vocab, name, is_last, i, prompt_item
             )
         elif param_type == "integer":
             value, generated_tokens = generate_number(
-                model, current_input, vocab, name, is_last, i
+                model, current_input, vocab, name, is_last, i, prompt_item
             )
             value = int(value)
         elif param_type == "boolean":
             value, generated_tokens = generate_boolean(
-                model, current_input, vocab, name, i
+                model, current_input, vocab, name, i, prompt_item
             )
         elif param_type == "string":
             value, generated_tokens = generate_string(
-                model, current_input, vocab, name, i
+                model, current_input, vocab, name, i, prompt_item
             )
         else:
             raise ValueError(f"Unsupported parameter type: {param_type!r}")
